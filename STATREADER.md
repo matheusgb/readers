@@ -1,5 +1,6 @@
 Todo:
-[] Contemplar outros campos além de CPU
-[] Adicionar delay programável
-[] Modo sem output
-...
+
+- [ ] Contemplar outros campos além de CPU
+- [ ] Adicionar delay programável
+- [ ] Modo sem output
+      ...
