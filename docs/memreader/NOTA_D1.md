@@ -1,4 +1,4 @@
-Notas baseadas nas diversas [sugestões do Sanchez sobre memreader.c](https://github.com/rnsanchez/readers/blob/master/memreader.c);
+## Dia 1
 
 ### Entendendo e comparando o uso de static e volatile em `sig_atomic_t  stop`.
 
@@ -77,5 +77,3 @@ f(1, 2);  // válido
 ```
 
 Emitem um warning, mas não evita do programa ser compilado. Para a `main` não emite nem warning, mas não conseguimos acessar os valores passados nos parâmetros setados por default `(int argc, char *argv[], char *envp[])`
-
-...
