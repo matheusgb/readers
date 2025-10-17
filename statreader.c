@@ -1,6 +1,17 @@
+/* Define _POSIX_C_SOURCE para garantir disponibilidade das funções POSIX */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 199309L
+#endif
+
 #include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
 #include <string.h>
-#include <unistd.h> // importa sleep
+#include <unistd.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <time.h>
 
 #define MAX_ITEM 15
 #define MAX_CPUS 50
@@ -22,75 +33,147 @@ typedef struct
     char guest_nice[MAX_ITEM]; // Análogo a nice mas no contexto de virtualização, VM configurada com prioridade reduzida apresenta aumento.
 } CPU;
 
-int main()
+static int reporta_erro(char *mensagem);
+static int chama_probe(void);
+
+static char *pula_espacos(char *ptr, const char *end);
+static char *copia_token(char *src, const char *end, char *dest, size_t max_len);
+
+int main(int, char **)
+{
+    const struct timespec delay = {1, 0};
+    struct timespec sobra = {
+        0,
+    };
+
+    while (nanosleep(&delay, &sobra) == 0)
+        (void)chama_probe();
+
+    printf("\nPrograma finalizado.\n");
+
+    if (sobra.tv_sec + sobra.tv_nsec > 0)
+    {
+        printf("nanosleep terminou com errno %d (%s), restando pausar por outros %ld.%09ld ns\n",
+               errno, strerror(errno), sobra.tv_sec, sobra.tv_nsec);
+    }
+
+    return 0;
+}
+
+static int
+reporta_erro(char *mensagem)
+{
+    fprintf(stderr, "%s (errno: %d, %s)\n", mensagem, errno, strerror(errno));
+    exit(EXIT_FAILURE);
+}
+
+static char *
+pula_espacos(char *ptr, const char *end)
+{
+    while (ptr < end && (*ptr == ' ' || *ptr == '\t'))
+        ptr++;
+    return ptr;
+}
+
+static char *
+copia_token(char *src, const char *end, char *dest, size_t max_len)
+{
+    size_t len = 0;
+
+    src = pula_espacos(src, end);
+
+    while (src < end && *src != ' ' && *src != '\t' && *src != '\n' && len < max_len - 1)
+    {
+        dest[len++] = *src++;
+    }
+
+    dest[len] = '\0';
+
+    return src;
+}
+
+static int
+chama_probe(void)
 {
     CPU cpuInfos[MAX_CPUS];
     size_t cpuQuantities = 0;
-    char line[MAX_LINE];
+    char buffer[4096];
+    char *ptr;
+    const char *end;
     char label[MAX_LABEL];
+    struct timespec ts;
+    ssize_t lidos;
+    int fd;
 
-    while (1)
+    fd = open("/proc/stat", O_RDONLY);
+    if (fd < 0)
+        return reporta_erro("erro abrindo /proc/stat");
+
+    clock_gettime(CLOCK_REALTIME, &ts);
+
+    lidos = read(fd, buffer, sizeof(buffer));
+    close(fd);
+
+    if (lidos <= 0)
+        return reporta_erro("erro lendo de /proc/stat");
+
+    end = &buffer[lidos];
+
+    ptr = buffer;
+    while (ptr < end && cpuQuantities < MAX_CPUS)
     {
-        FILE *fptr = fopen("/proc/stat", "r");
-        if (!fptr)
-        {
-            perror("Erro ao abrir /proc/stat");
-            return 1;
-        }
+        char *linha_inicio = ptr;
+        const char *linha_end;
 
-        cpuQuantities = 0;
+        while (ptr < end && *ptr != '\n')
+            ptr++;
 
-        while (fgets(line, sizeof(line), fptr) != NULL)
-        {
-            if (cpuQuantities > MAX_CPUS)
-            {
-                print("ALERTA: Máximo de CPUs ultrapassado");
-                break;
-            }
+        if (ptr >= end)
+            break;
 
-            int n = sscanf(line, "%15s %15s %15s %15s %15s %15s %15s %15s %15s %15s %15s",
-                           label,
-                           cpuInfos[cpuQuantities].user,
-                           cpuInfos[cpuQuantities].nice,
-                           cpuInfos[cpuQuantities].system,
-                           cpuInfos[cpuQuantities].idle,
-                           cpuInfos[cpuQuantities].iowait,
-                           cpuInfos[cpuQuantities].irq,
-                           cpuInfos[cpuQuantities].softirq,
-                           cpuInfos[cpuQuantities].steal,
-                           cpuInfos[cpuQuantities].guest,
-                           cpuInfos[cpuQuantities].guest_nice);
+        linha_end = ptr;
+        ptr++;
 
-            // omite informações que não são diretamente do cpu (por enquanto)
-            if (strncmp(label, "cpu", 3) != 0)
-                continue;
+        char *pos = copia_token(linha_inicio, linha_end, label, MAX_LABEL);
 
-            cpuQuantities++;
-        }
+        if (strncmp(label, "cpu", 3) != 0)
+            continue;
 
-        fclose(fptr);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].user, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].nice, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].system, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].idle, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].iowait, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].irq, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].softirq, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].steal, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].guest, MAX_ITEM);
+        pos = copia_token(pos, linha_end, cpuInfos[cpuQuantities].guest_nice, MAX_ITEM);
 
-        // Move o cursor para o topo da tela e limpa a tela
-        // https://www.reddit.com/r/C_Programming/comments/1ez0vhl/whats_the_most_efficient_way_to_clear_the_terminal/?tl=pt-br
-        printf("\033[H\033[J");
+        cpuQuantities++;
+    }
 
-        for (size_t i = 0; i < cpuQuantities; i++)
-        {
-            printf("CPU %zu: user=%s, nice=%s, system=%s, idle=%s, iowait=%s, irq=%s, softirq=%s, steal=%s, guest=%s, guest_nice=%s\n",
-                   i,
-                   cpuInfos[i].user,
-                   cpuInfos[i].nice,
-                   cpuInfos[i].system,
-                   cpuInfos[i].idle,
-                   cpuInfos[i].iowait,
-                   cpuInfos[i].irq,
-                   cpuInfos[i].softirq,
-                   cpuInfos[i].steal,
-                   cpuInfos[i].guest,
-                   cpuInfos[i].guest_nice);
-        }
+    if (cpuQuantities >= MAX_CPUS)
+    {
+        fprintf(stderr, "ALERTA: Máximo de CPUs (%d) atingido ou ultrapassado\n", MAX_CPUS);
+    }
 
-        sleep(1);
+    printf("Timestamp: %ld.%09ld\n", ts.tv_sec, ts.tv_nsec);
+
+    for (size_t i = 0; i < cpuQuantities; i++)
+    {
+        printf("CPU %zu: user=%s, nice=%s, system=%s, idle=%s, iowait=%s, irq=%s, softirq=%s, steal=%s, guest=%s, guest_nice=%s\n",
+               i,
+               cpuInfos[i].user,
+               cpuInfos[i].nice,
+               cpuInfos[i].system,
+               cpuInfos[i].idle,
+               cpuInfos[i].iowait,
+               cpuInfos[i].irq,
+               cpuInfos[i].softirq,
+               cpuInfos[i].steal,
+               cpuInfos[i].guest,
+               cpuInfos[i].guest_nice);
     }
 
     return 0;
