@@ -1,13 +1,9 @@
-/* Define _POSIX_C_SOURCE para garantir disponibilidade das funções POSIX */
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 199309L
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
+#include <getopt.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -39,23 +35,58 @@ static int chama_probe(void);
 static char *pula_espacos(char *ptr, const char *end);
 static char *copia_token(char *src, const char *end, char *dest, size_t max_len);
 
-int main(int, char **)
+int main(int argc, char **argv)
 {
-    const struct timespec delay = {1, 0};
-    struct timespec sobra = {
-        0,
-    };
+    struct timespec delay = {1, 0};
+    long max_samples = -1;
+    long count = 0;
+    struct timespec sobra = {0};
+    int i;
+    double d;
 
-    while (nanosleep(&delay, &sobra) == 0)
-        (void)chama_probe();
-
-    printf("\nPrograma finalizado.\n");
-
-    if (sobra.tv_sec + sobra.tv_nsec > 0)
+    // processa args meio tosco
+    for (i = 1; i < argc; i++)
     {
-        printf("nanosleep terminou com errno %d (%s), restando pausar por outros %ld.%09ld ns\n",
-               errno, strerror(errno), sobra.tv_sec, sobra.tv_nsec);
+        if (strcmp(argv[i], "--delay") == 0 || strcmp(argv[i], "-d") == 0)
+        {
+            i++;
+            if (i >= argc)
+                break;
+            d = atof(argv[i]);
+            delay.tv_sec = (long)d;
+            delay.tv_nsec = (long)((d - delay.tv_sec) * 1000000000);
+        }
+        else if (strcmp(argv[i], "-F") == 0)
+        {
+            i++;
+            if (i >= argc)
+                break;
+            d = 1.0 / atof(argv[i]);
+            delay.tv_sec = (long)d;
+            delay.tv_nsec = (long)((d - delay.tv_sec) * 1000000000);
+        }
+        else if (strcmp(argv[i], "--max") == 0 || strcmp(argv[i], "-m") == 0)
+        {
+            i++;
+            if (i >= argc)
+                break;
+            max_samples = atol(argv[i]);
+        }
     }
+
+    while (1)
+    {
+        if (nanosleep(&delay, &sobra) != 0)
+            break;
+
+        chama_probe();
+        count++;
+
+        if (max_samples > 0 && count >= max_samples)
+            break;
+    }
+
+    printf("\nFinal do programa - %ld amostras.\n", count);
 
     return 0;
 }
